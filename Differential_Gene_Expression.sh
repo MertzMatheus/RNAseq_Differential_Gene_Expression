@@ -1,56 +1,51 @@
 #!/bin/bash
 
-# Diretórios e variáveis
-FASTQ_DIR="/path/to/fastq_files"
-FASTQC_DIR="/path/to/Fastqc_analysis"
-TRIMMOMATIC_DIR="/path/to/trimmomatic"
-HISAT2_INDEX_DIR="/path/to/Index_Hisat2"
-REFERENCE_GENOME="/path/to/genome_reference"
-GFF3_FILE="/path/to/Gff3_file"
-OUTPUT_DIR="/path/to//output"
-GTF_FILE="/path/to/annotation.gtf"
+# Directories and variables
+INPUT_DIR="/path/to/RNAseq/files"
+TRIMMOMATIC_DIR="${OUTPUT_DIR}/trimmomatic"
+HISAT2_INDEX_DIR="/path/to/genome/reference"
+REFERENCE_GENOME="genome.fna"
+GFF3_FILE="annotation.gff"
+OUTPUT_DIR="/path/to/results"
 SCRIPTS_DIR="/path/to/scripts"
 
-# Verificar se os diretórios de saída existem, caso contrário, criá-los
-mkdir -p $FASTQC_DIR
+# Check if output directories exist, create them if they don't
+mkdir -p $OUTPUT_DIR/fastqc
 mkdir -p $OUTPUT_DIR/trimmed
 mkdir -p $OUTPUT_DIR/hisat2
 mkdir -p $OUTPUT_DIR/samtools
 mkdir -p $OUTPUT_DIR/prepDE
 
 # FastQC
-echo "Running FastQC..."
-fastqc -t 15 -o $FASTQC_DIR $FASTQ_DIR/*.fastq.gz
-
-# MultiQC
-echo "Running MultiQC..."
-multiqc $FASTQC_DIR -o $FASTQC_DIR
+#echo "Running FastQC..."
+#fastqc -t 15 -o $OUTPUT_DIR/fastqc $INPUT_DIR/*.fastq
 
 # Trimmomatic
 echo "Running Trimmomatic..."
-for sample in $FASTQ_DIR/*.fastq.gz; do
-    base=$(basename $sample ".fastq.gz")
-    java -jar $TRIMMOMATIC_DIR/trimmomatic-0.36.jar PE -threads 15 -phred64 \
-    $FASTQ_DIR/${base}_R1_001.fastq.gz $FASTQ_DIR/${base}_R2_001.fastq.gz \
-    $OUTPUT_DIR/trimmed/${base}_R1_paired.fastq.gz $OUTPUT_DIR/trimmed/${base}_R1_unpaired.fastq.gz \
-    $OUTPUT_DIR/trimmed/${base}_R2_paired.fastq.gz $OUTPUT_DIR/trimmed/${base}_R2_unpaired.fastq.gz \
-    ILLUMINACLIP:$TRIMMOMATIC_DIR/adapters/TruSeq3-PE-2.fa:2:30:10 \
-    LEADING:3 TRAILING:3 MINLEN:36
+for sample in $INPUT_DIR/*_R1.fastq; do
+    base=$(basename $sample "_R1.fastq")  # Get the base part of the filename
+    
+    # Define the corresponding file with suffix _R2.fastq
+    sample_R2="${INPUT_DIR}/${base}_R2.fastq"
+    
+    java -jar /path/to/Trimmomatic-0.39/trimmomatic.jar PE -threads 15 \
+    $sample $sample_R2 \
+    $OUTPUT_DIR/trimmed/${base}_R1_paired.fastq $OUTPUT_DIR/trimmed/${base}_R1_unpaired.fastq \
+    $OUTPUT_DIR/trimmed/${base}_R2_paired.fastq $OUTPUT_DIR/trimmed/${base}_R2_unpaired.fastq \
+    ILLUMINACLIP:/path/to/Trimmomatic-0.39/adapters/TruSeq3-PE.fa:2:30:10 LEADING:15 TRAILING:15 SLIDINGWINDOW:4:20 MINLEN:20 TOPHRED33
 done
 
-# Indexação do genoma de referência com HISAT2
+# Index the reference genome with HISAT2
 echo "Indexing reference genome with HISAT2..."
-hisat2_extract_splice_sites.py $HISAT2_INDEX_DIR/$GFF3_FILE > $HISAT2_INDEX_DIR/splicesites.tsv
-hisat2_extract_exons.py $HISAT2_INDEX_DIR/$GFF3_FILE > $HISAT2_INDEX_DIR/exons.tsv
-hisat2-build -p 20 --ss $HISAT2_INDEX_DIR/splicesites.tsv --exon $HISAT2_INDEX_DIR/exons.tsv $HISAT2_INDEX_DIR/$REFERENCE_GENOME $HISAT2_INDEX_DIR/index
+hisat2-build -p 20 $HISAT2_INDEX_DIR/$REFERENCE_GENOME $HISAT2_INDEX_DIR/index
 
 # HISAT2
 echo "Running HISAT2..."
-for sample in $OUTPUT_DIR/trimmed/*_paired.fastq.gz; do
-    base=$(basename $sample "_paired.fastq.gz")
+for base in $OUTPUT_DIR/trimmed/*_R1_paired.fastq; do
+    base=$(basename $base "_R1_paired.fastq")
     hisat2 -p 15 -x $HISAT2_INDEX_DIR/index \
-    -1 $OUTPUT_DIR/trimmed/${base}_R1_paired.fastq.gz \
-    -2 $OUTPUT_DIR/trimmed/${base}_R2_paired.fastq.gz \
+    -1 $OUTPUT_DIR/trimmed/${base}_R1_paired.fastq \
+    -2 $OUTPUT_DIR/trimmed/${base}_R2_paired.fastq \
     -S $OUTPUT_DIR/hisat2/${base}.sam
 done
 
@@ -65,14 +60,17 @@ done
 
 # StringTie
 echo "Running StringTie..."
+output_txt="$OUTPUT_DIR/prepDE/file_list.txt"  # Name of the file list that will be generated
+> $output_txt  # Create or clear the text file
+
 for bamfile in $OUTPUT_DIR/samtools/*_sorted.bam; do
     base=$(basename $bamfile "_sorted.bam")
-    stringtie -e -B -p 60 -G $HISAT2_INDEX_DIR/$GFF3_FILE \
-    -o $OUTPUT_DIR/prepDE/${base}.gtf $bamfile
+    /path/to/stringtie/stringtie -e -B -p 16 -G $HISAT2_INDEX_DIR/$GFF3_FILE -o $OUTPUT_DIR/prepDE/${base}.gtf $bamfile
+    echo "${base}.gtf $OUTPUT_DIR/prepDE/${base}.gtf" >> $output_txt  # Add the line to the text file
 done
 
 # prepDE.py
 echo "Running prepDE.py..."
-python $SCRIPTS_DIR/prepDE.py -i $OUTPUT_DIR/samtools -g $OUTPUT_DIR/prepDE/gene_count_matrix.csv -t $OUTPUT_DIR/prepDE/transcript_count_matrix.csv
+python $SCRIPTS_DIR/prepDE.py3 -i $output_txt -g $OUTPUT_DIR/prepDE/gene_count_matrix.csv -t $OUTPUT_DIR/prepDE/transcript_count_matrix.csv
 
 echo "Pipeline finished!"
